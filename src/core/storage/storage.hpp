@@ -6,6 +6,8 @@
 #include <memory>
 
 namespace llaisys::core {
+class Runtime;
+
 class Storage {
 private:
     std::byte *_memory;
@@ -23,6 +25,8 @@ public:
     llaisysDeviceType_t deviceType() const;
     int deviceId() const;
     bool isHost() const;
+
+    Runtime& runtime() const;
 };
 
 }; // namespace llaisys::core

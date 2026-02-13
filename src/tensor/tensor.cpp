@@ -18,24 +18,23 @@ tensor_t Tensor::create(const std::vector<size_t> &shape,
     size_t ndim_ = shape.size();
     std::vector<ptrdiff_t> strides(ndim_);
 
-    // Calculate strides
+    // 计算步长strides 从最后一个维度向前计算
     size_t stride = 1;
     for (size_t i = 1; i <= ndim_; i++) {
         strides[ndim_ - i] = stride;
         stride *= shape[ndim_ - i];
     }
+
     TensorMeta meta{dtype, shape, strides};
     size_t total_elems = stride;
     size_t dtype_size = utils::dsize(dtype);
 
-    // 当请求 CPU 内存但当前运行时环境不是 CPU 时（比如 GPU 环境）
-    // 分配 可被 GPU 访问的主机内存
     if (device_type == LLAISYS_DEVICE_CPU && core::context().runtime().deviceType() != LLAISYS_DEVICE_CPU) {
+        // 特殊情况：请求CPU内存但当前在GPU环境中
         auto storage = core::context().runtime().allocateHostStorage(total_elems * dtype_size);
         return std::shared_ptr<Tensor>(new Tensor(meta, storage));
     } else {
-        // 对于 GPU 请求：分配 GPU 内存
-        // 对于纯 CPU 环境：分配普通 CPU 内存
+        // 正常情况：GPU请求或纯CPU环境
         core::context().setDevice(device_type, device);
         auto storage = core::context().runtime().allocateDeviceStorage(total_elems * dtype_size);
         return std::shared_ptr<Tensor>(new Tensor(meta, storage));
@@ -50,7 +49,6 @@ const std::byte *Tensor::data() const {
     return _storage->memory() + _offset;
 }
 
-// 维度
 size_t Tensor::ndim() const {
     return _meta.shape.size();
 }
@@ -75,7 +73,6 @@ int Tensor::deviceId() const {
     return _storage->deviceId();
 }
 
-// 元素总数
 size_t Tensor::numel() const {
     return std::accumulate(_meta.shape.begin(), _meta.shape.end(), size_t(1), std::multiplies<size_t>());
 }
@@ -172,13 +169,14 @@ void Tensor::debug() const {
 }
 
 bool Tensor::isContiguous() const {
-    // A tensor is contiguous when its strides match the standard C-order dense layout.
     const auto &sh = this->shape();
     const auto &st = this->strides();
     size_t n = sh.size();
+
     if (n == 0) {
         return true;
     }
+
     size_t expected = 1;
     for (ptrdiff_t i = static_cast<ptrdiff_t>(n) - 1; i >= 0; --i) {
         if (static_cast<size_t>(st[i]) != expected) {
@@ -193,6 +191,7 @@ tensor_t Tensor::permute(const std::vector<size_t> &order) const {
     if (order.size() != this->ndim()) {
         throw std::invalid_argument("permute: order size must equal number of dimensions");
     }
+    
     size_t n = this->ndim();
     std::vector<char> seen(n, 0);
     for (size_t v : order) {
@@ -218,16 +217,18 @@ tensor_t Tensor::permute(const std::vector<size_t> &order) const {
 }
 
 tensor_t Tensor::view(const std::vector<size_t> &shape) const {
-    // view is only allowed when number of elements match and tensor is contiguous
+    // 确保与原张量的元素数量相同
     size_t new_numel = std::accumulate(shape.begin(), shape.end(), size_t(1), std::multiplies<size_t>());
     if (new_numel != this->numel()) {
         throw std::invalid_argument("view: total elements mismatch");
     }
+
+    // view操作要求张量在内存中是连续存储的
     if (!this->isContiguous()) {
         throw std::runtime_error("view: tensor must be contiguous to view");
     }
 
-    // compute new contiguous strides
+    // 计算新步幅
     size_t ndim_ = shape.size();
     std::vector<ptrdiff_t> new_strides(ndim_);
     size_t stride = 1;
@@ -236,6 +237,7 @@ tensor_t Tensor::view(const std::vector<size_t> &shape) const {
         stride *= shape[ndim_ - i];
     }
 
+    // 零拷贝操作：没有数据复制，只是改变了对数据的"视图"
     TensorMeta meta{this->dtype(), shape, new_strides};
     return std::shared_ptr<Tensor>(new Tensor(std::move(meta), _storage, _offset));
 }
@@ -248,11 +250,13 @@ tensor_t Tensor::slice(size_t dim, size_t start, size_t end) const {
         throw std::out_of_range("slice: invalid start/end");
     }
 
-    TensorMeta meta = _meta;
-    meta.shape[dim] = end - start;
+    TensorMeta meta = _meta;  // 拷贝元数据
+    meta.shape[dim] = end - start;  // 更新切片维度的形状
 
-    // offset increases by start * stride[dim] elements -> bytes
-    size_t byte_offset = static_cast<size_t>(start * _meta.strides[dim]) * this->elementSize();
+    // 计算字节偏移量
+    size_t element_offset = start * _meta.strides[dim];
+    size_t byte_offset = element_offset * this->elementSize();
+    
     return std::shared_ptr<Tensor>(new Tensor(std::move(meta), _storage, _offset + byte_offset));
 }
 
@@ -261,138 +265,43 @@ void Tensor::load(const void *src_) {
         return;
     }
 
-    // Ensure runtime/context points to this tensor's device
-    core::context().setDevice(this->deviceType(), this->deviceId());
+    if (this->numel() == 0) {
+        return;  
+    }
 
-    // total bytes to copy
+    // 获取张量自己的运行时
+    auto& runtime = _storage->runtime(); 
+    
     size_t bytes = this->numel() * this->elementSize();
+    std::byte* dst = this->data();
 
-    // If storage is host-accessible, do a direct memcpy.
-    // Otherwise perform a host->device memcpy via the runtime API.
     if (_storage->isHost()) {
-        std::memcpy(this->data(), src_, bytes);
+        // 主机内存：直接memcpy
+        std::memcpy(dst, src_, bytes);
     } else {
-        core::context().runtime().api()->memcpy_sync(
-            this->data(),
-            src_,
-            bytes,
-            LLAISYS_MEMCPY_H2D);
+        // 设备内存：通过runtime的API复制
+        runtime.api()->memcpy_sync(
+            dst,                    // 目标：设备内存
+            src_,                   // 源：主机内存
+            bytes,                  // 字节数
+            LLAISYS_MEMCPY_H2D      // 方向：主机→设备
+        );
     }
 }
 
 tensor_t Tensor::contiguous() const {
-    if (this->isContiguous()) {
-        // returning a new Tensor object that shares the same storage/offset/meta
-        return std::shared_ptr<Tensor>(new Tensor(_meta, _storage, _offset));
-    }
-
-    // For now we implement contiguous() for host-accessible tensors.
-    if (!_storage->isHost()) {
-        throw std::runtime_error("contiguous: not implemented for non-host storage");
-    }
-
-    // allocate destination contiguous tensor on the same device/type
-    auto dst = Tensor::create(this->shape(), this->dtype(), this->deviceType(), this->deviceId());
-
-    size_t elem_sz = this->elementSize();
-    // copy element-by-element using strides
-    size_t n = this->numel();
-    const std::vector<size_t> &sh = this->shape();
-    const std::vector<ptrdiff_t> &st = this->strides();
-    std::vector<size_t> idx(sh.size(), 0);
-
-    for (size_t linear = 0; linear < n; ++linear) {
-        // compute source element index in elements (not bytes)
-        size_t rem = linear;
-        size_t src_elem_index = 0;
-        for (size_t d = 0; d < sh.size(); ++d) {
-            // compute multi-index for dimension d
-            size_t dim_idx = 0;
-            // We can compute multi-index by dividing rem by product of later dims
-            // Precompute multipliers could be faster, but compute here directly.
-            size_t mult = 1;
-            for (size_t k = d + 1; k < sh.size(); ++k) {
-                mult *= sh[k];
-            }
-            if (mult != 0) {
-                dim_idx = rem / mult;
-                rem = rem % mult;
-            } else {
-                dim_idx = 0;
-            }
-            src_elem_index += static_cast<size_t>(st[d]) * dim_idx;
-        }
-        const std::byte *src_ptr = this->data() + src_elem_index * elem_sz;
-        std::byte *dst_ptr = dst->data() + linear * elem_sz;
-        std::memcpy(dst_ptr, src_ptr, elem_sz);
-    }
-
-    return dst;
+    // todo
+    return nullptr;
 }
 
 tensor_t Tensor::reshape(const std::vector<size_t> &shape) const {
-    return this->view(shape);
+    // todo
+    return nullptr;
 }
 
 tensor_t Tensor::to(llaisysDeviceType_t device_type, int device) const {
-    // If destination is same as current, return a tensor that shares storage (no copy).
-    if (device_type == this->deviceType() && (device < 0 || device == this->deviceId())) {
-        return std::shared_ptr<Tensor>(new Tensor(_meta, _storage, _offset));
-    }
-
-    size_t bytes = this->numel() * this->elementSize();
-
-    // Set context to source device so that create(...) for CPU allocations uses the correct runtime when needed.
-    core::context().setDevice(this->deviceType(), this->deviceId());
-
-    // create destination tensor on requested device
-    auto dst = Tensor::create(this->shape(), this->dtype(), device_type, device);
-
-    // If both storages are host, plain memcpy
-    if (this->_storage->isHost() && dst->_storage->isHost()) {
-        std::memcpy(dst->data(), this->data(), bytes);
-        return dst;
-    }
-
-    // If same runtime (same device type & device id), do device-to-device copy directly
-    if (this->deviceType() == device_type && this->deviceId() == device) {
-        core::context().runtime().api()->memcpy_sync(dst->data(), this->data(), bytes, LLAISYS_MEMCPY_D2D);
-        return dst;
-    }
-
-    // Common cases:
-    // - src is CPU, dst is device: H2D (current context is src runtime (CPU) but create for device may have switched context
-    //   so set context back to src device to perform the appropriate memcpy)
-    // - src is device, dst is CPU: D2H
-    // - cross-device (e.g., GPU_A -> GPU_B): use host staging: D2H from src runtime, then H2D to dst runtime.
-
-    // Case: src is CPU, dst is device
-    if (this->deviceType() == LLAISYS_DEVICE_CPU && device_type != LLAISYS_DEVICE_CPU) {
-        // set context to dst device runtime (create may have changed it already, but ensure)
-        core::context().setDevice(device_type, device);
-        core::context().runtime().api()->memcpy_sync(dst->data(), this->data(), bytes, LLAISYS_MEMCPY_H2D);
-        return dst;
-    }
-
-    // Case: src is device, dst is CPU
-    if (this->deviceType() != LLAISYS_DEVICE_CPU && device_type == LLAISYS_DEVICE_CPU) {
-        // set context to src device
-        core::context().setDevice(this->deviceType(), this->deviceId());
-        core::context().runtime().api()->memcpy_sync(dst->data(), this->data(), bytes, LLAISYS_MEMCPY_D2H);
-        return dst;
-    }
-
-    // Case: cross-device (both non-CPU and different devices / runtimes)
-    // Use host staging:
-    auto host_tmp = Tensor::create(this->shape(), this->dtype(), LLAISYS_DEVICE_CPU);
-    // copy src -> host_tmp (set context to src)
-    core::context().setDevice(this->deviceType(), this->deviceId());
-    core::context().runtime().api()->memcpy_sync(host_tmp->data(), this->data(), bytes, LLAISYS_MEMCPY_D2H);
-    // copy host_tmp -> dst (set context to dst)
-    core::context().setDevice(device_type, device);
-    core::context().runtime().api()->memcpy_sync(dst->data(), host_tmp->data(), bytes, LLAISYS_MEMCPY_H2D);
-
-    return dst;
-}
+   // todo
+    return nullptr;
+}   
 
 } // namespace llaisys

@@ -10,18 +10,21 @@ namespace llaisys::ops::cpu {
 
 void embedding(std::byte *out, const std::byte *index, const std::byte *weight, llaisysDataType_t dtype,
                size_t N, size_t weight_rows, size_t emb_dim) {
-    // index is int64_t
     const int64_t *idx = reinterpret_cast<const int64_t *>(index);
 
     switch (dtype) {
     case LLAISYS_DTYPE_F32: {
         const float *weight_f = reinterpret_cast<const float *>(weight);
         float *out_f = reinterpret_cast<float *>(out);
+        // 每行的字节数
         const size_t row_bytes = emb_dim * sizeof(float);
         for (size_t i = 0; i < N; ++i) {
             int64_t id = idx[i];
+            // 边界检查：索引必须在[0, weight_rows-1]范围内
             ASSERT(id >= 0 && static_cast<size_t>(id) < weight_rows, "Embedding: index out of range.");
+            // 计算源地址：weight起始 + (id * emb_dim)个元素
             const void *src = weight_f + (static_cast<size_t>(id) * emb_dim);
+            // 计算目标地址：out起始 + (i * emb_dim)个元素
             void *dst = out_f + (i * emb_dim);
             std::memcpy(dst, src, row_bytes);
         }

@@ -37,4 +37,9 @@ int Storage::deviceId() const {
 bool Storage::isHost() const {
     return _is_host;
 }
+
+Runtime& Storage::runtime() const {  
+    return _runtime; 
+}
+
 } // namespace llaisys::core
