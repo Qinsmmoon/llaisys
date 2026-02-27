@@ -11,19 +11,20 @@ namespace llaisys::ops::cpu {
 template <typename T>
 void swiglu_impl(T *out, const T *gate, const T *up, size_t N, size_t D) {
     const size_t total = N * D;
-    // elementwise: out = up * (gate / (1 + exp(-gate)))
+    // elementwise: out = up * (gate * sigmoid(gate))  // SwiGLU 实际公式
+    // SwiGLU = up * Swish(gate) 其中 Swish(x) = x * sigmoid(x)
     for (size_t i = 0; i < total; ++i) {
         if constexpr (std::is_same_v<T, llaisys::bf16_t> || std::is_same_v<T, llaisys::fp16_t>) {
             float g = llaisys::utils::cast<float>(gate[i]);
             float u = llaisys::utils::cast<float>(up[i]);
-            float s = 1.0f / (1.0f + std::expf(-g));
-            float y = u * (g * s);
+            float sigmoid = 1.0f / (1.0f + std::exp(-g));  // 使用 std::exp 而不是 std::expf
+            float y = u * (g * sigmoid);
             out[i] = llaisys::utils::cast<T>(y);
         } else {
             float g = static_cast<float>(gate[i]);
             float u = static_cast<float>(up[i]);
-            float s = 1.0f / (1.0f + std::expf(-g));
-            float y = u * (g * s);
+            float sigmoid = 1.0f / (1.0f + std::exp(-g));  // 使用 std::exp 而不是 std::expf
+            float y = u * (g * sigmoid);
             out[i] = static_cast<T>(y);
         }
     }

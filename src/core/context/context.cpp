@@ -1,6 +1,8 @@
 #include "context.hpp"
 #include "../../utils.hpp"
 #include <thread>
+#include <iostream>
+#include <sstream>
 
 namespace llaisys::core {
 
@@ -16,14 +18,35 @@ Context::Context() {
     // Activate the first available device. If no other device is available, activate CPU runtime.
     for (auto device_type : device_typs) {
         const LlaisysRuntimeAPI *api_ = llaisysGetRuntimeAPI(device_type);
-        int device_count = api_->get_device_count();
-        std::vector<Runtime *> runtimes_(device_count);
-        for (int device_id = 0; device_id < device_count; device_id++) {
 
+        if (api_ == nullptr) {
+            std::cerr << "[Context DEBUG] No runtime API registered for device_type=" 
+                      << static_cast<int>(device_type) << std::endl;
+            // Ensure map has an entry (empty vector)
+            _runtime_map[device_type] = std::vector<Runtime *>();
+            continue;
+        }
+
+        int device_count = 0;
+        try {
+            device_count = api_->get_device_count();
+        } catch (...) {
+            std::cerr << "[Context DEBUG] get_device_count() threw for device_type=" 
+                      << static_cast<int>(device_type) << std::endl;
+            device_count = 0;
+        }
+
+        // initialize vector with nullptr entries of size device_count
+        std::vector<Runtime *> runtimes_(device_count, nullptr);
+        
+        for (int device_id = 0; device_id < device_count; device_id++) {
+            // 为每个设备 ID 创建运行时
+            auto runtime = new Runtime(device_type, device_id);
+            runtimes_[device_id] = runtime;
+            
+            // 如果没有激活的运行时，激活第一个可用的
             if (_current_runtime == nullptr) {
-                auto runtime = new Runtime(device_type, device_id);
                 runtime->_activate();
-                runtimes_[device_id] = runtime;
                 _current_runtime = runtime;
             }
         }
@@ -53,7 +76,21 @@ void Context::setDevice(llaisysDeviceType_t device_type, int device_id) {
     // If doest not match the current runtime.
     if (_current_runtime == nullptr || _current_runtime->deviceType() != device_type || _current_runtime->deviceId() != device_id) {
         auto runtimes = _runtime_map[device_type];
-        CHECK_ARGUMENT((size_t)device_id < runtimes.size() && device_id >= 0, "invalid device id");
+
+        // New clearer checks:
+        if (runtimes.empty()) {
+            std::ostringstream oss;
+            oss << "No devices available for device type " << static_cast<int>(device_type)
+                << ". requested device_id=" << device_id;
+            throw std::invalid_argument(oss.str());
+        }
+        if (device_id < 0 || static_cast<size_t>(device_id) >= runtimes.size()) {
+            std::ostringstream oss;
+            oss << "Invalid device id " << device_id << " for device type " << static_cast<int>(device_type)
+                << ". available_count=" << runtimes.size();
+            throw std::invalid_argument(oss.str());
+        }
+
         if (_current_runtime != nullptr) {
             _current_runtime->_deactivate();
         }

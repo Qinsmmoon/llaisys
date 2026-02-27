@@ -6,6 +6,7 @@
 // keep the header include (preferred) but also provide a local forward-declaration
 // in case of include-order / build-system issues that made the CPU namespace invisible.
 #include "cpu/rms_norm_cpu.hpp"
+#include "nvidia/rms_norm_nvidia.hpp"
 
 namespace llaisys::ops {
 // forward-declare the cpu implementation to ensure the compiler sees the symbol
@@ -60,8 +61,7 @@ void rms_norm(tensor_t out, tensor_t in, tensor_t weight, float eps) {
         return cpu::rms_norm(out->data(), in->data(), weight->data(), out->dtype(), N, d, eps);
 #ifdef ENABLE_NVIDIA_API
     case LLAISYS_DEVICE_NVIDIA:
-        TO_BE_IMPLEMENTED();
-        return;
+        return nvidia::rms_norm(out->data(), in->data(), weight->data(), out->dtype(), N, d, eps);
 #endif
     default:
         EXCEPTION_UNSUPPORTED_DEVICE;

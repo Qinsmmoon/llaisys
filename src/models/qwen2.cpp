@@ -11,6 +11,7 @@
 #include <limits>
 #include <algorithm>
 #include <cctype>
+#include <cmath>
 #include <iostream>
 #include <iomanip>
 #include <unordered_map>
@@ -184,8 +185,12 @@ int Qwen2Model::load_tensor(const char *name, const void *data, size_t ndim, con
         // 处理不同类型的张量
         if (tensor_name == "model.embed_tokens.weight") {
             // 输入嵌入层
-            if (ndim != 2 || shape[0] != _meta.voc || shape[1] != _meta.hs) {
-                std::cerr << "Invalid shape for embed_tokens.weight" << std::endl;
+            if (ndim != 2 || static_cast<size_t>(shape[0]) != _meta.voc || 
+                static_cast<size_t>(shape[1]) != _meta.hs) {
+                std::cerr << "Invalid shape for embed_tokens.weight: expected [" 
+                          << _meta.voc << ", " << _meta.hs << "], got [" 
+                          << shape[0] << ", " << shape[1] << "]" << std::endl;
+                delete c_tensor;
                 return -1;
             }
             _cweights.in_embed = c_tensor;
@@ -193,8 +198,12 @@ int Qwen2Model::load_tensor(const char *name, const void *data, size_t ndim, con
             
         } else if (tensor_name == "lm_head.weight") {
             // 输出层权重
-            if (ndim != 2 || shape[0] != _meta.voc || shape[1] != _meta.hs) {
-                std::cerr << "Invalid shape for lm_head.weight" << std::endl;
+            if (ndim != 2 || static_cast<size_t>(shape[0]) != _meta.voc || 
+                static_cast<size_t>(shape[1]) != _meta.hs) {
+                std::cerr << "Invalid shape for lm_head.weight: expected [" 
+                          << _meta.voc << ", " << _meta.hs << "], got [" 
+                          << shape[0] << ", " << shape[1] << "]" << std::endl;
+                delete c_tensor;
                 return -1;
             }
             _cweights.out_embed = c_tensor;
@@ -202,8 +211,10 @@ int Qwen2Model::load_tensor(const char *name, const void *data, size_t ndim, con
             
         } else if (tensor_name == "model.norm.weight") {
             // 输出层归一化
-            if (ndim != 1 || shape[0] != _meta.hs) {
-                std::cerr << "Invalid shape for model.norm.weight" << std::endl;
+            if (ndim != 1 || static_cast<size_t>(shape[0]) != _meta.hs) {
+                std::cerr << "Invalid shape for model.norm.weight: expected [" 
+                          << _meta.hs << "], got [" << shape[0] << "]" << std::endl;
+                delete c_tensor;
                 return -1;
             }
             _cweights.out_norm_w = c_tensor;
@@ -211,147 +222,215 @@ int Qwen2Model::load_tensor(const char *name, const void *data, size_t ndim, con
             
         } else if (tensor_name.find("input_layernorm.weight") != std::string::npos && layer_idx >= 0) {
             // 注意力层输入归一化
-            if (ndim != 1 || shape[0] != _meta.hs) {
-                std::cerr << "Invalid shape for input_layernorm.weight" << std::endl;
+            if (ndim != 1 || static_cast<size_t>(shape[0]) != _meta.hs) {
+                std::cerr << "Invalid shape for input_layernorm.weight: expected [" 
+                          << _meta.hs << "], got [" << shape[0] << "]" << std::endl;
+                delete c_tensor;
                 return -1;
             }
             if (layer_idx >= 0 && layer_idx < static_cast<int>(_meta.nlayer)) {
                 _cweights.attn_norm_w[layer_idx] = c_tensor;
                 std::cout << "  Loaded layer " << layer_idx << " input_layernorm.weight" << std::endl;
+            } else {
+                delete c_tensor;
+                return -1;
             }
             
         } else if (tensor_name.find("post_attention_layernorm.weight") != std::string::npos && layer_idx >= 0) {
             // MLP层输入归一化
-            if (ndim != 1 || shape[0] != _meta.hs) {
-                std::cerr << "Invalid shape for post_attention_layernorm.weight" << std::endl;
+            if (ndim != 1 || static_cast<size_t>(shape[0]) != _meta.hs) {
+                std::cerr << "Invalid shape for post_attention_layernorm.weight: expected [" 
+                          << _meta.hs << "], got [" << shape[0] << "]" << std::endl;
+                delete c_tensor;
                 return -1;
             }
             if (layer_idx >= 0 && layer_idx < static_cast<int>(_meta.nlayer)) {
                 _cweights.mlp_norm_w[layer_idx] = c_tensor;
                 std::cout << "  Loaded layer " << layer_idx << " post_attention_layernorm.weight" << std::endl;
+            } else {
+                delete c_tensor;
+                return -1;
             }
             
         } else if (tensor_name.find("self_attn.q_proj.weight") != std::string::npos && layer_idx >= 0) {
             // Q投影权重
-            if (ndim != 2 || shape[0] != _meta.hs || shape[1] != _meta.hs) {
-                std::cerr << "Invalid shape for q_proj.weight" << std::endl;
+            if (ndim != 2 || static_cast<size_t>(shape[0]) != _meta.hs || 
+                static_cast<size_t>(shape[1]) != _meta.hs) {
+                std::cerr << "Invalid shape for q_proj.weight: expected [" 
+                          << _meta.hs << ", " << _meta.hs << "], got [" 
+                          << shape[0] << ", " << shape[1] << "]" << std::endl;
+                delete c_tensor;
                 return -1;
             }
             if (layer_idx >= 0 && layer_idx < static_cast<int>(_meta.nlayer)) {
                 _cweights.attn_q_w[layer_idx] = c_tensor;
                 std::cout << "  Loaded layer " << layer_idx << " q_proj.weight" << std::endl;
+            } else {
+                delete c_tensor;
+                return -1;
             }
             
         } else if (tensor_name.find("self_attn.q_proj.bias") != std::string::npos && layer_idx >= 0) {
             // Q投影偏置
-            if (ndim != 1 || shape[0] != _meta.hs) {
-                std::cerr << "Invalid shape for q_proj.bias" << std::endl;
+            if (ndim != 1 || static_cast<size_t>(shape[0]) != _meta.hs) {
+                std::cerr << "Invalid shape for q_proj.bias: expected [" 
+                          << _meta.hs << "], got [" << shape[0] << "]" << std::endl;
+                delete c_tensor;
                 return -1;
             }
             if (layer_idx >= 0 && layer_idx < static_cast<int>(_meta.nlayer)) {
                 _cweights.attn_q_b[layer_idx] = c_tensor;
                 std::cout << "  Loaded layer " << layer_idx << " q_proj.bias" << std::endl;
+            } else {
+                delete c_tensor;
+                return -1;
             }
             
         } else if (tensor_name.find("self_attn.k_proj.weight") != std::string::npos && layer_idx >= 0) {
             // K投影权重 (GQA: 实际维度是 nkvh * dh)
-            int64_t expected_dim = _meta.nkvh * _meta.dh;
-            if (ndim != 2 || shape[0] != expected_dim || shape[1] != _meta.hs) {
+            size_t expected_dim = static_cast<size_t>(_meta.nkvh * _meta.dh);
+            if (ndim != 2 || static_cast<size_t>(shape[0]) != expected_dim || 
+                static_cast<size_t>(shape[1]) != _meta.hs) {
                 std::cerr << "Invalid shape for k_proj.weight: expected [" << expected_dim 
                           << ", " << _meta.hs << "], got [" << shape[0] << ", " << shape[1] << "]" << std::endl;
+                delete c_tensor;
                 return -1;
             }
             if (layer_idx >= 0 && layer_idx < static_cast<int>(_meta.nlayer)) {
                 _cweights.attn_k_w[layer_idx] = c_tensor;
                 std::cout << "  Loaded layer " << layer_idx << " k_proj.weight" << std::endl;
+            } else {
+                delete c_tensor;
+                return -1;
             }
             
         } else if (tensor_name.find("self_attn.k_proj.bias") != std::string::npos && layer_idx >= 0) {
             // K投影偏置 (GQA)
-            int64_t expected_dim = _meta.nkvh * _meta.dh;
-            if (ndim != 1 || shape[0] != expected_dim) {
+            size_t expected_dim = static_cast<size_t>(_meta.nkvh * _meta.dh);
+            if (ndim != 1 || static_cast<size_t>(shape[0]) != expected_dim) {
                 std::cerr << "Invalid shape for k_proj.bias: expected [" << expected_dim 
                           << "], got [" << shape[0] << "]" << std::endl;
+                delete c_tensor;
                 return -1;
             }
             if (layer_idx >= 0 && layer_idx < static_cast<int>(_meta.nlayer)) {
                 _cweights.attn_k_b[layer_idx] = c_tensor;
                 std::cout << "  Loaded layer " << layer_idx << " k_proj.bias" << std::endl;
+            } else {
+                delete c_tensor;
+                return -1;
             }
             
         } else if (tensor_name.find("self_attn.v_proj.weight") != std::string::npos && layer_idx >= 0) {
             // V投影权重 (GQA)
-            int64_t expected_dim = _meta.nkvh * _meta.dh;
-            if (ndim != 2 || shape[0] != expected_dim || shape[1] != _meta.hs) {
+            size_t expected_dim = static_cast<size_t>(_meta.nkvh * _meta.dh);
+            if (ndim != 2 || static_cast<size_t>(shape[0]) != expected_dim || 
+                static_cast<size_t>(shape[1]) != _meta.hs) {
                 std::cerr << "Invalid shape for v_proj.weight: expected [" << expected_dim 
                           << ", " << _meta.hs << "], got [" << shape[0] << ", " << shape[1] << "]" << std::endl;
+                delete c_tensor;
                 return -1;
             }
             if (layer_idx >= 0 && layer_idx < static_cast<int>(_meta.nlayer)) {
                 _cweights.attn_v_w[layer_idx] = c_tensor;
                 std::cout << "  Loaded layer " << layer_idx << " v_proj.weight" << std::endl;
+            } else {
+                delete c_tensor;
+                return -1;
             }
             
         } else if (tensor_name.find("self_attn.v_proj.bias") != std::string::npos && layer_idx >= 0) {
             // V投影偏置 (GQA)
-            int64_t expected_dim = _meta.nkvh * _meta.dh;
-            if (ndim != 1 || shape[0] != expected_dim) {
+            size_t expected_dim = static_cast<size_t>(_meta.nkvh * _meta.dh);
+            if (ndim != 1 || static_cast<size_t>(shape[0]) != expected_dim) {
                 std::cerr << "Invalid shape for v_proj.bias: expected [" << expected_dim 
                           << "], got [" << shape[0] << "]" << std::endl;
+                delete c_tensor;
                 return -1;
             }
             if (layer_idx >= 0 && layer_idx < static_cast<int>(_meta.nlayer)) {
                 _cweights.attn_v_b[layer_idx] = c_tensor;
                 std::cout << "  Loaded layer " << layer_idx << " v_proj.bias" << std::endl;
+            } else {
+                delete c_tensor;
+                return -1;
             }
             
         } else if (tensor_name.find("self_attn.o_proj.weight") != std::string::npos && layer_idx >= 0) {
             // 输出投影权重
-            if (ndim != 2 || shape[0] != _meta.hs || shape[1] != _meta.hs) {
-                std::cerr << "Invalid shape for o_proj.weight" << std::endl;
+            if (ndim != 2 || static_cast<size_t>(shape[0]) != _meta.hs || 
+                static_cast<size_t>(shape[1]) != _meta.hs) {
+                std::cerr << "Invalid shape for o_proj.weight: expected [" 
+                          << _meta.hs << ", " << _meta.hs << "], got [" 
+                          << shape[0] << ", " << shape[1] << "]" << std::endl;
+                delete c_tensor;
                 return -1;
             }
             if (layer_idx >= 0 && layer_idx < static_cast<int>(_meta.nlayer)) {
                 _cweights.attn_o_w[layer_idx] = c_tensor;
                 std::cout << "  Loaded layer " << layer_idx << " o_proj.weight" << std::endl;
+            } else {
+                delete c_tensor;
+                return -1;
             }
             
         } else if (tensor_name.find("mlp.gate_proj.weight") != std::string::npos && layer_idx >= 0) {
             // MLP门投影权重
-            if (ndim != 2 || shape[0] != _meta.di || shape[1] != _meta.hs) {
-                std::cerr << "Invalid shape for gate_proj.weight" << std::endl;
+            if (ndim != 2 || static_cast<size_t>(shape[0]) != _meta.di || 
+                static_cast<size_t>(shape[1]) != _meta.hs) {
+                std::cerr << "Invalid shape for gate_proj.weight: expected [" 
+                          << _meta.di << ", " << _meta.hs << "], got [" 
+                          << shape[0] << ", " << shape[1] << "]" << std::endl;
+                delete c_tensor;
                 return -1;
             }
             if (layer_idx >= 0 && layer_idx < static_cast<int>(_meta.nlayer)) {
                 _cweights.mlp_gate_w[layer_idx] = c_tensor;
                 std::cout << "  Loaded layer " << layer_idx << " gate_proj.weight" << std::endl;
+            } else {
+                delete c_tensor;
+                return -1;
             }
             
         } else if (tensor_name.find("mlp.up_proj.weight") != std::string::npos && layer_idx >= 0) {
             // MLP上投影权重
-            if (ndim != 2 || shape[0] != _meta.di || shape[1] != _meta.hs) {
-                std::cerr << "Invalid shape for up_proj.weight" << std::endl;
+            if (ndim != 2 || static_cast<size_t>(shape[0]) != _meta.di || 
+                static_cast<size_t>(shape[1]) != _meta.hs) {
+                std::cerr << "Invalid shape for up_proj.weight: expected [" 
+                          << _meta.di << ", " << _meta.hs << "], got [" 
+                          << shape[0] << ", " << shape[1] << "]" << std::endl;
+                delete c_tensor;
                 return -1;
             }
             if (layer_idx >= 0 && layer_idx < static_cast<int>(_meta.nlayer)) {
                 _cweights.mlp_up_w[layer_idx] = c_tensor;
                 std::cout << "  Loaded layer " << layer_idx << " up_proj.weight" << std::endl;
+            } else {
+                delete c_tensor;
+                return -1;
             }
             
         } else if (tensor_name.find("mlp.down_proj.weight") != std::string::npos && layer_idx >= 0) {
             // MLP下投影权重
-            if (ndim != 2 || shape[0] != _meta.hs || shape[1] != _meta.di) {
-                std::cerr << "Invalid shape for down_proj.weight" << std::endl;
+            if (ndim != 2 || static_cast<size_t>(shape[0]) != _meta.hs || 
+                static_cast<size_t>(shape[1]) != _meta.di) {
+                std::cerr << "Invalid shape for down_proj.weight: expected [" 
+                          << _meta.hs << ", " << _meta.di << "], got [" 
+                          << shape[0] << ", " << shape[1] << "]" << std::endl;
+                delete c_tensor;
                 return -1;
             }
             if (layer_idx >= 0 && layer_idx < static_cast<int>(_meta.nlayer)) {
                 _cweights.mlp_down_w[layer_idx] = c_tensor;
                 std::cout << "  Loaded layer " << layer_idx << " down_proj.weight" << std::endl;
+            } else {
+                delete c_tensor;
+                return -1;
             }
             
         } else {
             std::cerr << "Unknown tensor: " << tensor_name << std::endl;
-            delete c_tensor;  // 释放未使用的tensor
+            delete c_tensor;
             return -1;
         }
         
@@ -456,7 +535,7 @@ int64_t Qwen2Model::infer(const int64_t *token_ids, size_t ntoken, int64_t *out_
         const size_t num_heads = _meta.nh; // 12
         const size_t num_kv_heads = _meta.nkvh; // 2
         const size_t head_dim = hidden_size / num_heads; // 128
-        const size_t num_queries_per_kv = num_heads / num_kv_heads; // 6
+        // const size_t num_queries_per_kv = num_heads / num_kv_heads; // 6
 
         // previous cached length
         size_t prev_cache = _cache_seq_len;
@@ -588,7 +667,7 @@ int64_t Qwen2Model::infer(const int64_t *token_ids, size_t ntoken, int64_t *out_
             // 到下一层：此处 hidden_states 的对应 slice已经被更新
         }
         
-        // 更新缓存长���
+        // 更新缓存长度
         _cache_seq_len = ntoken;
         
         // 最终RMSNorm（对整个 hidden_states 做norm）

@@ -15,9 +15,11 @@ def torch_self_attention(attn_val, query, key, value, scale):
     L, S = query.size(-2), key.size(-2)
     attn_bias = torch.zeros(L, S, dtype=query.dtype, device=query.device)
 
-    temp_mask = torch.ones(L, S, dtype=torch.bool).tril(diagonal=S-L)
+    # mask on same device as query
+    temp_mask = torch.ones(L, S, dtype=torch.bool, device=query.device).tril(diagonal=S - L)
     attn_bias.masked_fill_(temp_mask.logical_not(), float("-inf"))
-    attn_bias.to(query.dtype)
+    # ensure dtype (attn_bias already correct, but keep explicit)
+    attn_bias = attn_bias.to(query.dtype)
 
     key = key.repeat_interleave(query.size(-3) // key.size(-3), -3)
     value = value.repeat_interleave(query.size(-3) // value.size(-3), -3)
@@ -41,7 +43,7 @@ def test_op_self_attention(
     profile=False,
 ):
     print(
-        f"   qlen={qlen} kvlen={kvlen} nh={nh} nkvh={nkvh} hd={hd} dtype <{dtype_name}>"
+        f"   qlen={qlen} kvlen={kvlen} nh={nh} nkvh={nkvh} hd={hd} dtype <{dtype_name}> device_name <{device_name}>"
     )
     q, q_ = random_tensor((qlen, nh, hd), dtype_name, device_name)
     k, k_ = random_tensor((kvlen, nkvh, hd), dtype_name, device_name)

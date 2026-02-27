@@ -19,6 +19,21 @@
 #include <stdint.h>
 #endif
 
+#ifdef __cplusplus
+// 检查是否在系统头文件上下文中
+#ifndef _MMINTRIN_H_INCLUDED  // 或其他系统头文件的保护宏
+#define __C extern "C"
+#else
+#define __C  // 在系统头文件中不展开为 extern "C"
+#endif
+#include <cstddef>
+#include <cstdint>
+#else
+#define __C
+#include <stddef.h>
+#include <stdint.h>
+#endif
+
 // Device Types
 typedef enum {
     LLAISYS_DEVICE_CPU = 0,

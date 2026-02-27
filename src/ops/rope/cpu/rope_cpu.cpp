@@ -38,8 +38,8 @@ void rope_impl(T *out, const T *in, const int64_t *pos_ids, size_t seqlen, size_
 
                     // phi = pos / denom[j]
                     float phi = static_cast<float>(p) / denom[j];
-                    float c = std::cosf(phi);
-                    float s = std::sinf(phi);
+                    float c = std::cos(phi);  // 使用 std::cos 而不是 std::cosf
+                    float s = std::sin(phi);  // 使用 std::sin 而不是 std::sinf
 
                     float oa = a * c - b * s;
                     float ob = b * c + a * s;
@@ -52,8 +52,8 @@ void rope_impl(T *out, const T *in, const int64_t *pos_ids, size_t seqlen, size_
                     float b = static_cast<float>(in[ib]);
 
                     float phi = static_cast<float>(p) / denom[j];
-                    float c = std::cosf(phi);
-                    float s = std::sinf(phi);
+                    float c = std::cos(phi);  // 使用 std::cos 而不是 std::cosf
+                    float s = std::sin(phi);  // 使用 std::sin 而不是 std::sinf
 
                     float oa = a * c - b * s;
                     float ob = b * c + a * s;
