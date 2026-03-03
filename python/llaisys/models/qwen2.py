@@ -36,13 +36,13 @@ class Qwen2:
         """
         model_path = Path(model_path)
         
-        # 1. 读取配置文件
+        # 读取配置文件
         config = self._load_config(model_path / "config.json")
         
-        # 2. 创建模型元数据
+        # 创建模型元数据
         meta = self._create_meta_from_config(config, max_seq_len)
         
-        # 3. 创建 C 模型对象
+        # 创建 C 模型对象
         self._model_ptr = self._create_model(meta, device)
         if not self._model_ptr:
             raise RuntimeError("Failed to create Qwen2 model")
@@ -90,7 +90,7 @@ class Qwen2:
         # RoPE 参数
         meta.theta = config.get("rope_theta", 10000.0)
         
-        # 结束标记（注意：Qwen2 的 bos_token_id 和 eos_token_id 相同）
+        # 结束标记（Qwen2 的 bos_token_id 和 eos_token_id 相同）
         meta.end_token = config.get("eos_token_id", 151643)
         
         print(f"Model config: layers={meta.nlayer}, hidden_size={meta.hs}, "
@@ -272,16 +272,6 @@ class Qwen2:
         if max_new_tokens <= 0:
             return list(inputs)
         
-        # 当前仅支持argmax采样（top_k=1）
-        if top_k != 1:
-            print(f"Warning: Only argmax sampling (top_k=1) is currently supported. Using argmax instead of top_k={top_k}")
-        
-        if temperature != 1.0:
-            print(f"Warning: Temperature scaling is not implemented. Using temperature=1.0 instead of {temperature}")
-        
-        if top_p != 1.0:
-            print(f"Warning: Top-p sampling is not implemented. Using top_p=1.0 instead of {top_p}")
-        
         # 转换输入为列表
         input_tokens = list(inputs)
         generated_tokens = []
@@ -300,11 +290,14 @@ class Qwen2:
             
             try:
                 result = LIB_LLAISYS.llaisysQwen2ModelInfer(
-                    self._model_ptr,        # c_void_p
-                    input_array,            # POINTER(c_int64)
-                    len(input_tokens),      # c_size_t
-                    output_array,           # POINTER(c_int64)
-                    1                       # c_size_t
+                    self._model_ptr,
+                    input_array,
+                    len(input_tokens),
+                    output_array,
+                    1,
+                    temperature,  
+                    top_k,         
+                    top_p          
                 )
                 print(f"[Step {i+1}] Inference result: {result}")
                 

@@ -7,6 +7,7 @@ from ctypes import (
     c_int,
     c_char_p,
     c_void_p,
+    c_float
 )
 from .llaisys_types import llaisysDataType_t, llaisysDeviceType_t
 from .tensor import llaisysTensor_t
@@ -69,7 +70,16 @@ def load_qwen2(lib):
     lib.llaisysQwen2ModelLoadTensor.restype = c_int
 
     # Infer: (model, int64_t* token_ids, size_t ntoken) -> int64_t next token
-    lib.llaisysQwen2ModelInfer.argtypes = [c_void_p, POINTER(c_int64), c_size_t, POINTER(c_int64), c_size_t]
-    lib.llaisysQwen2ModelInfer.restype = c_int64
-    
+    lib.llaisysQwen2ModelInfer.argtypes = [
+        c_void_p,           # model_ptr
+        POINTER(c_int64),  # token_ids
+        c_size_t,            # ntoken
+        POINTER(c_int64),  # out_ids
+        c_size_t,            # out_capacity
+        c_float,             # temperature
+        c_int,               # top_k
+        c_float               # top_p
+    ]
+    lib.llaisysQwen2ModelInfer.restype = c_int
+
     return lib

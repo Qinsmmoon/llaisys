@@ -49,7 +49,10 @@ __C {
         const int64_t *token_ids,
         size_t ntoken,
         int64_t *out_ids,
-        size_t out_capacity
+        size_t out_capacity,
+        float temperature,
+        int top_k,
+        float top_p
     ) {
         if (model == nullptr || model->model == nullptr){
             return -1;
@@ -57,7 +60,7 @@ __C {
         } 
         auto cpp = reinterpret_cast<llaisys::models::Qwen2Model*>(model->model);
         // The C++ impl uses signature: int64_t infer(const int64_t*, size_t, int64_t*, size_t)
-        return cpp->infer(token_ids, ntoken, out_ids, out_capacity);
+        return cpp->infer(token_ids, ntoken, out_ids, out_capacity, temperature, top_k, top_p);
     }
 
     // Load a tensor into the model (called from Python loader)

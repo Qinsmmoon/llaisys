@@ -5,10 +5,10 @@
 #include <cstddef>
 
 namespace llaisys::ops::cpu {
-// attn_val: output buffer (seqlen x nhead x dv)
-// q: (seqlen x nhead x d)
-// k: (total_len x nkvhead x d)
-// v: (total_len x nkvhead x dv)
+// attn_val: [seqlen, nhead, dv] (序列长度 × 注意力头数 × 值维度)
+// q: [seqlen, nhead, d] (序列长度 × 注意力头数 × 头维度)
+// k: [total_len, nkvhead, d] (总长度 × Key-Value头数 × 头维度)
+// v: [total_len, nkvhead, dv] (总长度 × Key-Value头数 × 值维度)
 // dtype: datatype (F32/F16/BF16 supported)
 // scale: scaling factor applied to QK^T
 // seqlen, nhead, d: query shape

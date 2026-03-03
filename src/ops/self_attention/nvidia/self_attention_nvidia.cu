@@ -288,7 +288,6 @@ void self_attention(std::byte *attn_val_b, const std::byte *q_b, const std::byte
     if (nkvhead != nhead) {
         ASSERT((nhead % nkvhead) == 0, "self_attention (nvidia): nhead must be a multiple of nkvhead when repeating heads.");
     }
-    ASSERT(seqlen > 0 && nhead > 0 && d > 0 && total_len > 0 && dv > 0, "self_attention (nvidia): invalid dimensions");
 
     // one block per (t, h)
     size_t blocks = seqlen * nhead;

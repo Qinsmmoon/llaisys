@@ -5,7 +5,6 @@
 
 namespace llaisys::ops::nvidia {
 
-// 通用模板，通过 reinterpret_cast 处理不同数据类型
 template<typename T>
 __global__ void add_kernel(const T* a, const T* b, T* c, size_t n) {
     size_t idx = blockIdx.x * blockDim.x + threadIdx.x;
@@ -14,7 +13,7 @@ __global__ void add_kernel(const T* a, const T* b, T* c, size_t n) {
     }
 }
 
-// FP16 特化：使用 __half 类型（确保 CUDA 架构 >= 6.0）
+// FP16 特化：使用 __half 类型
 template<>
 __global__ void add_kernel<__half>(const __half* a, const __half* b, __half* c, size_t n) {
     size_t idx = blockIdx.x * blockDim.x + threadIdx.x;
@@ -23,7 +22,7 @@ __global__ void add_kernel<__half>(const __half* a, const __half* b, __half* c, 
     }
 }
 
-// BF16 特化：使用 __nv_bfloat16（需要 CUDA 11+ 且架构 >= Ampere）
+// BF16 特化：使用 __nv_bfloat16
 template<>
 __global__ void add_kernel<__nv_bfloat16>(const __nv_bfloat16* a, const __nv_bfloat16* b, __nv_bfloat16* c, size_t n) {
     size_t idx = blockIdx.x * blockDim.x + threadIdx.x;
@@ -35,7 +34,7 @@ __global__ void add_kernel<__nv_bfloat16>(const __nv_bfloat16* a, const __nv_bfl
 // 调度函数
 void add(std::byte* c, const std::byte* a, const std::byte* b,
          llaisysDataType_t type, size_t numel) {
-    // 选择网格/线程块大小
+    // 网格/线程块大小
     const int block = 256;
     const int grid = (numel + block - 1) / block;
 

@@ -8,7 +8,7 @@ namespace llaisys::device::nvidia {
 
 namespace runtime_api {
 
-// 辅助函数：检查 CUDA 错误
+// 检查 CUDA 错误
 inline void checkCudaError(cudaError_t err, const char* func) {
     if (err != cudaSuccess) {
         std::cerr << "CUDA Error in " << func << ": " 
@@ -203,7 +203,7 @@ static const LlaisysRuntimeAPI RUNTIME_API = {
     &mallocHost,
     &freeHost,
     &memcpySync,
-    &memcpyAsync   // 注意：这里只能传入一个函数指针，应该是5参数版本
+    &memcpyAsync
 };
 
 } // namespace runtime_api

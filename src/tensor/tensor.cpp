@@ -73,6 +73,7 @@ int Tensor::deviceId() const {
     return _storage->deviceId();
 }
 
+// 元素总数
 size_t Tensor::numel() const {
     return std::accumulate(_meta.shape.begin(), _meta.shape.end(), size_t(1), std::multiplies<size_t>());
 }

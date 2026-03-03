@@ -9,7 +9,7 @@ add_includedirs("include")
 -- CPU --
 includes("xmake/cpu.lua")
 
--- NVIDIA --
+-- NVIDIA GPU 选项配置 --
 option("nv-gpu")
     set_default(true)
     set_showmenu(true)

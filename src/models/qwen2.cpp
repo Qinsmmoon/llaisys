@@ -23,6 +23,7 @@
 #include "../ops/rope/op.hpp"
 #include "../ops/self_attention/op.hpp"
 #include "../ops/swiglu/op.hpp"
+#include "../ops/sample/op.hpp"
 
 using namespace llaisys;
 using namespace llaisys::models;
@@ -53,8 +54,8 @@ tensor_t get_tensor_from_ptr(llaisysTensor_t c_tensor) {
 }
 
 // 辅助函数：创建用于推理的临时tensor
-tensor_t create_temp_tensor(const std::vector<size_t>& shape, llaisysDataType_t dtype) {
-    return Tensor::create(shape, dtype, LLAISYS_DEVICE_CPU, 0);
+tensor_t Qwen2Model::_create_tensor(const std::vector<size_t>& shape, llaisysDataType_t dtype) {
+    return Tensor::create(shape, dtype, _device_type, _device_id);
 }
 
 Qwen2Model::Qwen2Model(const LlaisysQwen2Meta *meta, llaisysDeviceType_t device, int *device_ids, int ndevice) {
@@ -67,7 +68,6 @@ Qwen2Model::Qwen2Model(const LlaisysQwen2Meta *meta, llaisysDeviceType_t device,
     _device_type = device;
     _device_id = (ndevice > 0) ? device_ids[0] : 0;
     _cache_seq_len = 0;
-    _last_token = -1;
     
     // 初始化 C 权重结构
     memset(&_cweights, 0, sizeof(LlaisysQwen2Weights));
@@ -487,7 +487,8 @@ static tensor_t concat_along_seq(const tensor_t& a, const tensor_t& b, const Lla
 }
 
 // 单步推理：处理一个token序列，生成下一个token
-int64_t Qwen2Model::infer(const int64_t *token_ids, size_t ntoken, int64_t *out_ids, size_t out_capacity) {
+int64_t Qwen2Model::infer(const int64_t *token_ids, size_t ntoken, int64_t *out_ids, size_t out_capacity,
+              float temperature, int top_k, float top_p) {
     if (!token_ids || ntoken == 0 || !out_ids || out_capacity == 0) {
         std::cerr << "[ERROR] Invalid parameters for infer" << std::endl;
         std::cerr << "[ERROR] token_ids=" << token_ids << ", ntoken=" << ntoken 
@@ -511,7 +512,7 @@ int64_t Qwen2Model::infer(const int64_t *token_ids, size_t ntoken, int64_t *out_
         }
         
         std::vector<int64_t> input_tokens(token_ids, token_ids + ntoken);
-        auto index_tensor = create_temp_tensor({ntoken}, LLAISYS_DTYPE_I64);
+        auto index_tensor = _create_tensor({ntoken}, LLAISYS_DTYPE_I64);
         index_tensor->load(input_tokens.data());
         auto embedding_weight = get_tensor_from_ptr(_cweights.in_embed);
 
@@ -521,10 +522,10 @@ int64_t Qwen2Model::infer(const int64_t *token_ids, size_t ntoken, int64_t *out_
         }
 
         // hidden_states contains full sequence hidden states; we'll update slices for new tokens
-        auto hidden_states = create_temp_tensor({ntoken, _meta.hs}, _meta.dtype);
+        auto hidden_states = _create_tensor({ntoken, _meta.hs}, _meta.dtype);
         embedding(hidden_states, index_tensor, embedding_weight);
         
-        auto pos_ids = create_temp_tensor({ntoken}, LLAISYS_DTYPE_I64);
+        auto pos_ids = _create_tensor({ntoken}, LLAISYS_DTYPE_I64);
         std::vector<int64_t> positions(ntoken);
         for (size_t i = 0; i < ntoken; i++) {
             positions[i] = static_cast<int64_t>(i);
@@ -552,7 +553,7 @@ int64_t Qwen2Model::infer(const int64_t *token_ids, size_t ntoken, int64_t *out_
                 return -1;
             }
             
-            auto normed_hidden = create_temp_tensor(hidden_states->shape(), _meta.dtype);
+            auto normed_hidden = _create_tensor(hidden_states->shape(), _meta.dtype);
             rms_norm(normed_hidden, hidden_states, attn_norm_weight, _meta.epsilon);
             
             // Q投影: 对新增部分（若 prev_cache == 0 则是全部）
@@ -578,15 +579,15 @@ int64_t Qwen2Model::infer(const int64_t *token_ids, size_t ntoken, int64_t *out_
             }
             
             // Q_proj for new tokens: shape [new_tokens, hidden_size]
-            auto q_proj_new = create_temp_tensor({new_tokens, hidden_size}, _meta.dtype);
+            auto q_proj_new = _create_tensor({new_tokens, hidden_size}, _meta.dtype);
             linear(q_proj_new, normed_new_slice, q_proj_weight, q_proj_bias);
             
             // K_proj for new tokens: shape [new_tokens, num_kv_heads * head_dim]
-            auto k_proj_new = create_temp_tensor({new_tokens, num_kv_heads * head_dim}, _meta.dtype);
+            auto k_proj_new = _create_tensor({new_tokens, num_kv_heads * head_dim}, _meta.dtype);
             linear(k_proj_new, normed_new_slice, k_proj_weight, k_proj_bias);
             
             // V_proj for new tokens: shape [new_tokens, num_kv_heads * head_dim]
-            auto v_proj_new = create_temp_tensor({new_tokens, num_kv_heads * head_dim}, _meta.dtype);
+            auto v_proj_new = _create_tensor({new_tokens, num_kv_heads * head_dim}, _meta.dtype);
             linear(v_proj_new, normed_new_slice, v_proj_weight, v_proj_bias);
             
             // ================== 重塑/分割并缓存K/V ==================
@@ -595,12 +596,12 @@ int64_t Qwen2Model::infer(const int64_t *token_ids, size_t ntoken, int64_t *out_
             auto v_reshaped_new = v_proj_new->view({new_tokens, num_kv_heads, head_dim});
             
             // 对新增 K 应用 RoPE（注意我们使用 meta.theta）
-            auto k_rope_new = create_temp_tensor({new_tokens, num_kv_heads, head_dim}, _meta.dtype);
+            auto k_rope_new = _create_tensor({new_tokens, num_kv_heads, head_dim}, _meta.dtype);
             auto pos_slice = pos_ids->slice(0, prev_cache, ntoken); // positions for new tokens
             rope(k_rope_new, k_reshaped_new, pos_slice, _meta.theta);
             
             // Q 的 RoPE 也只在新 Q 上应用
-            auto q_rope_new = create_temp_tensor({new_tokens, num_heads, head_dim}, _meta.dtype);
+            auto q_rope_new = _create_tensor({new_tokens, num_heads, head_dim}, _meta.dtype);
             rope(q_rope_new, q_reshaped_new, pos_slice, _meta.theta);
             
             // Append new k/v to layer cache
@@ -618,12 +619,12 @@ int64_t Qwen2Model::infer(const int64_t *token_ids, size_t ntoken, int64_t *out_
 
             // ================== 自注意力（仅对新增 tokens 的 Q 进行计算，K/V 使用完整缓存） ==================
             float scale = 1.0f / sqrtf(static_cast<float>(_meta.dh));
-            auto attn_output_new = create_temp_tensor({new_tokens, _meta.nh, _meta.dh}, _meta.dtype);
+            auto attn_output_new = _create_tensor({new_tokens, _meta.nh, _meta.dh}, _meta.dtype);
             self_attention(attn_output_new, q_rope_new, k_full, v_full, scale);
             
             // 投影输出并写回 hidden_states 的对应 slice
             auto attn_reshaped_new = attn_output_new->view({new_tokens, _meta.hs});
-            auto proj_output_new = create_temp_tensor({new_tokens, _meta.hs}, _meta.dtype);
+            auto proj_output_new = _create_tensor({new_tokens, _meta.hs}, _meta.dtype);
             auto o_proj_weight = get_tensor_from_ptr(_cweights.attn_o_w[layer_idx]);
             if (!o_proj_weight) {
                 std::cerr << "Output projection weight for layer " << layer_idx << " not loaded" << std::endl;
@@ -643,22 +644,22 @@ int64_t Qwen2Model::infer(const int64_t *token_ids, size_t ntoken, int64_t *out_
                 return -1;
             }
             
-            auto mlp_normed_new = create_temp_tensor(hidden_new_slice->shape(), _meta.dtype);
+            auto mlp_normed_new = _create_tensor(hidden_new_slice->shape(), _meta.dtype);
             rms_norm(mlp_normed_new, hidden_new_slice, mlp_norm_weight, _meta.epsilon);
             
             auto gate_weight = get_tensor_from_ptr(_cweights.mlp_gate_w[layer_idx]);
-            auto gate = create_temp_tensor({new_tokens, _meta.di}, _meta.dtype);
+            auto gate = _create_tensor({new_tokens, _meta.di}, _meta.dtype);
             linear(gate, mlp_normed_new, gate_weight, nullptr);
             
             auto up_weight = get_tensor_from_ptr(_cweights.mlp_up_w[layer_idx]);
-            auto up = create_temp_tensor({new_tokens, _meta.di}, _meta.dtype);
+            auto up = _create_tensor({new_tokens, _meta.di}, _meta.dtype);
             linear(up, mlp_normed_new, up_weight, nullptr);
             
-            auto swiglu_out = create_temp_tensor({new_tokens, _meta.di}, _meta.dtype);
+            auto swiglu_out = _create_tensor({new_tokens, _meta.di}, _meta.dtype);
             swiglu(swiglu_out, gate, up);
             
             auto down_weight = get_tensor_from_ptr(_cweights.mlp_down_w[layer_idx]);
-            auto mlp_output_new = create_temp_tensor({new_tokens, _meta.hs}, _meta.dtype);
+            auto mlp_output_new = _create_tensor({new_tokens, _meta.hs}, _meta.dtype);
             linear(mlp_output_new, swiglu_out, down_weight, nullptr);
             
             // 残差连接写回 hidden_states[new_slice] = hidden_states[new_slice] + mlp_output_new
@@ -677,7 +678,7 @@ int64_t Qwen2Model::infer(const int64_t *token_ids, size_t ntoken, int64_t *out_
             return -1;
         }
 
-        auto final_normed = create_temp_tensor(hidden_states->shape(), _meta.dtype);
+        auto final_normed = _create_tensor(hidden_states->shape(), _meta.dtype);
         rms_norm(final_normed, hidden_states, final_norm_weight, _meta.epsilon);
         
         // 输出投影（LM Head）
@@ -689,26 +690,23 @@ int64_t Qwen2Model::infer(const int64_t *token_ids, size_t ntoken, int64_t *out_
         
         // 只使用最后一个token的隐藏状态
         auto last_hidden = final_normed->slice(0, ntoken-1, ntoken);
-        auto logits = create_temp_tensor({1, _meta.voc}, _meta.dtype);
+        auto logits = _create_tensor({1, _meta.voc}, _meta.dtype);
         linear(logits, last_hidden, lm_head_weight, nullptr);
         
         // 直接使用logits（已经是最后一个token的logits）
         auto last_logits_flat = logits->view({_meta.voc});    // [vocab_size]
         
-        // 使用argmax获取下一个token
-        auto max_idx = create_temp_tensor({1}, LLAISYS_DTYPE_I64);
-        auto max_val = create_temp_tensor({1}, _meta.dtype);
-        argmax(max_idx, max_val, last_logits_flat);
+        // 使用sample获取下一个token
+        auto token_tensor = _create_tensor({1}, LLAISYS_DTYPE_I64);
+   
+        // 调用采样算子
+        ops::sample(token_tensor, last_logits_flat, temperature, top_k, top_p);
 
         // 读取结果
         int64_t next_token;
-        // 直接通过数据指针读取
-        void* max_idx_data = max_idx->data();
-        if (!max_idx_data) {
-            throw std::runtime_error("max_idx tensor data is null");
-        }
+
         // 拷贝数据
-        memcpy(&next_token, max_idx_data, sizeof(int64_t));
+        memcpy(&next_token, token_tensor->data(), sizeof(int64_t));
 
         // 返回结果
         out_ids[0] = next_token;
